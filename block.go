@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
@@ -38,7 +39,8 @@ type Block struct {
 	blockHash                *chainhash.Hash // Cached block hash
 	blockHeight              int32           // Height in the main block chain
 	transactions             []*Tx           // Transactions
-	txnsGenerated            bool            // ALL wrapped transactions generated
+	//sstxos                   []*Tx           // All Transactions that are spendable and ttl != 0
+	txnsGenerated bool // ALL wrapped transactions generated
 }
 
 // MsgBlock returns the underlying wire.MsgBlock for the Block.
@@ -154,18 +156,108 @@ func (b *Block) Transactions() []*Tx {
 		b.transactions = make([]*Tx, len(b.msgBlock.Transactions))
 	}
 
+	var sstxoIndex, skipIndex uint32 //, indexToPut uint32
+	_, outskip := dedupeBlock(b)
 	// Generate and cache the wrapped transactions for all that haven't
 	// already been done.
 	for i, tx := range b.transactions {
 		if tx == nil {
 			newTx := NewTx(b.msgBlock.Transactions[i])
 			newTx.SetIndex(i)
+
+			for _, txo := range b.msgBlock.Transactions[i].TxOut {
+				var indexToPut int16
+
+				// Check if the output is unspendable or is a
+				// same block spend
+				if len(outskip) > 0 && skipIndex == outskip[0] {
+					outskip = outskip[1:]
+					indexToPut = SSTxoIndexNA
+				}
+				if isUnspendable(txo) {
+					indexToPut = SSTxoIndexNA
+				}
+				if indexToPut != SSTxoIndexNA {
+					indexToPut = int16(sstxoIndex)
+					sstxoIndex++
+				}
+
+				newTx.txos = append(newTx.txos, &Txo{
+					sstxoIndex: indexToPut,
+					msgTxo:     txo,
+				})
+				skipIndex++
+			}
 			b.transactions[i] = newTx
 		}
 	}
 
 	b.txnsGenerated = true
 	return b.transactions
+}
+
+// IsUnspendable determines whether a tx is spendable or not.
+// returns true if spendable, false if unspendable.
+func isUnspendable(o *wire.TxOut) bool {
+	switch {
+	case len(o.PkScript) > 10000: // len 0 is OK, spendable
+		return true
+	case len(o.PkScript) > 0 && o.PkScript[0] == 0x6a: // OP_RETURN is 0x6a
+		return true
+	default:
+		return false
+	}
+}
+
+// DedupeBlock takes a bitcoin block, and returns two int slices: the indexes of
+// inputs, and idexes of outputs which can be removed.  These are indexes
+// within the block as a whole, even the coinbase tx.
+// So the coinbase tx in & output numbers affect the skip lists even though
+// the coinbase ins/outs can never be deduped.  it's simpler that way.
+func dedupeBlock(blk *Block) (inskip []uint32, outskip []uint32) {
+	var i uint32
+	// wire.Outpoints are comparable with == which is nice.
+	inmap := make(map[wire.OutPoint]uint32)
+
+	// go through txs then inputs building map
+	for cbif0, tx := range blk.msgBlock.Transactions {
+		if cbif0 == 0 { // coinbase tx can't be deduped
+			i++ // coinbase has 1 input
+			continue
+		}
+		for _, in := range tx.TxIn {
+			inmap[in.PreviousOutPoint] = i
+			i++
+		}
+	}
+
+	i = 0
+	// start over, go through outputs finding skips
+	for cbif0, tx := range blk.msgBlock.Transactions {
+		if cbif0 == 0 { // coinbase tx can't be deduped
+			i += uint32(len(tx.TxOut)) // coinbase can have multiple inputs
+			continue
+		}
+
+		for outidx, _ := range tx.TxOut {
+			op := wire.OutPoint{Hash: tx.TxHash(), Index: uint32(outidx)}
+			inpos, exists := inmap[op]
+			if exists {
+				inskip = append(inskip, inpos)
+				outskip = append(outskip, i)
+			}
+			i++
+		}
+	}
+
+	// sort inskip list, as it's built in order consumed not created
+	sortUint32s(inskip)
+	return
+}
+
+// it'd be cool if you just had .sort() methods on slices of builtin types...
+func sortUint32s(s []uint32) {
+	sort.Slice(s, func(a, b int) bool { return s[a] < s[b] })
 }
 
 // TxHash returns the hash for the requested transaction number in the Block.

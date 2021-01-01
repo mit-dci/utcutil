@@ -17,6 +17,9 @@ import (
 // yet.
 const TxIndexUnknown = -1
 
+// SSTxoIndexNA is for OP_RETURN txos or same block spends that don't have a sstxoIndex
+const SSTxoIndexNA = -2
+
 // Tx defines a bitcoin transaction that provides easier and more efficient
 // manipulation of raw transactions.  It also memoizes the hash for the
 // transaction on its first access so subsequent accesses don't have to repeat
@@ -27,6 +30,7 @@ type Tx struct {
 	txHashWitness *chainhash.Hash // Cached transaction witness hash
 	txHasWitness  *bool           // If the transaction has witness data
 	txIndex       int             // Position within a block or TxIndexUnknown
+	txos          []*Txo          // A convenient wrapper around raw TxOut
 }
 
 // MsgTx returns the underlying wire.MsgTx for the transaction.
@@ -90,13 +94,23 @@ func (t *Tx) SetIndex(index int) {
 	t.txIndex = index
 }
 
+func (t *Tx) Txos() []*Txo {
+	return t.txos
+}
+
 // NewTx returns a new instance of a bitcoin transaction given an underlying
 // wire.MsgTx.  See Tx.
 func NewTx(msgTx *wire.MsgTx) *Tx {
-	return &Tx{
+	tx := Tx{
 		msgTx:   msgTx,
 		txIndex: TxIndexUnknown,
 	}
+	// Generate slice to hold all of the wrapped transactions if needed.
+	if len(msgTx.TxOut) == 0 {
+		tx.txos = make([]*Txo, 0, len(msgTx.TxOut))
+	}
+
+	return &tx
 }
 
 // NewTxFromBytes returns a new instance of a bitcoin transaction given the
@@ -120,5 +134,25 @@ func NewTxFromReader(r io.Reader) (*Tx, error) {
 		msgTx:   &msgTx,
 		txIndex: TxIndexUnknown,
 	}
+
 	return &t, nil
+}
+
+// Txo is a wrapper around TxOuts that provides easier and more efficient
+// manipulation of raw transaction outputs.
+type Txo struct {
+	sstxoIndex int16
+	msgTxo     *wire.TxOut
+}
+
+func (t *Txo) MsgTxo() *wire.TxOut {
+	return t.msgTxo
+}
+
+func (t *Txo) SIndex() int16 {
+	return t.sstxoIndex
+}
+
+func (t *Txo) SetSIndex(index int16) {
+	t.sstxoIndex = index
 }
