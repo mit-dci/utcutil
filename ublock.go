@@ -12,13 +12,15 @@ import (
 // UBlock represents a utreexo block. It mimicks the behavior of Block in block.go
 type UBlock struct {
 	msgUBlock *wire.MsgUBlock
+	block     *Block
 
-	serializedUBlock          []byte          // Serialized bytes for the block
-	serializedUBlockNoWitness []byte          // Serialized bytes for block w/o witness data
-	blockHash                 *chainhash.Hash // Cached block hash
-	blockHeight               int32           // Height in the main block chain
-	transactions              []*Tx           // Transactions
-	txnsGenerated             bool            // ALL wrapped transactions generated
+	serializedUBlock          []byte         // Serialized bytes for the block
+	serializedUBlockNoWitness []byte         // Serialized bytes for block w/o witness data
+	blockHash                 chainhash.Hash // Cached block hash
+	blockHeight               int32          // Height in the main block chain
+	transactions              []*Tx          // Transactions
+	txnsGenerated             bool           // ALL wrapped transactions generated
+	blockGenerated            bool
 }
 
 // MsgBlock returns the underlying wire.MsgUBlock for the Block.
@@ -71,57 +73,57 @@ func (ub *UBlock) BytesNoWitness() ([]byte, error) {
 // result so subsequent calls are more efficient.
 func (ub *UBlock) Hash() *chainhash.Hash {
 	// Return the cached block hash if it has already been generated.
-	if ub.blockHash != nil {
-		return ub.blockHash
+	if ub.block.blockHash != nil {
+		return ub.block.blockHash
 	}
 
 	// Cache the block hash and return it.
 	hash := ub.msgUBlock.BlockHash()
-	ub.blockHash = &hash
+	ub.block.blockHash = &hash
 	return &hash
 }
 
-// Transactions returns a slice of wrapped transactions (btcutil.Tx) for all
-// transactions in the Block.  This is nearly equivalent to accessing the raw
-// transactions (wire.MsgTx) in the underlying wire.MsgBlock, however it
-// instead provides easy access to wrapped versions (btcutil.Tx) of them.
-func (ub *UBlock) Transactions() []*Tx {
-	// Return transactions if they have ALL already been generated.  This
-	// flag is necessary because the wrapped transactions are lazily
-	// generated in a sparse fashion.
-	if ub.txnsGenerated {
-		return ub.transactions
-	}
-
-	// Generate slice to hold all of the wrapped transactions if needed.
-	if len(ub.transactions) == 0 {
-		ub.transactions = make([]*Tx, len(ub.msgUBlock.MsgBlock.Transactions))
-	}
-
-	// Generate and cache the wrapped transactions for all that haven't
-	// already ubeen done.
-	for i, tx := range ub.transactions {
-		if tx == nil {
-			newTx := NewTx(ub.msgUBlock.MsgBlock.Transactions[i])
-			newTx.SetIndex(i)
-			ub.transactions[i] = newTx
-		}
-	}
-
-	ub.txnsGenerated = true
-
-	return ub.transactions
-}
+//// Transactions returns a slice of wrapped transactions (btcutil.Tx) for all
+//// transactions in the Block.  This is nearly equivalent to accessing the raw
+//// transactions (wire.MsgTx) in the underlying wire.MsgBlock, however it
+//// instead provides easy access to wrapped versions (btcutil.Tx) of them.
+//func (ub *UBlock) Transactions() []*Tx {
+//	// Return transactions if they have ALL already been generated.  This
+//	// flag is necessary because the wrapped transactions are lazily
+//	// generated in a sparse fashion.
+//	if ub.txnsGenerated {
+//		return ub.transactions
+//	}
+//
+//	// Generate slice to hold all of the wrapped transactions if needed.
+//	if len(ub.transactions) == 0 {
+//		ub.transactions = make([]*Tx, len(ub.msgUBlock.MsgBlock.Transactions))
+//	}
+//
+//	// Generate and cache the wrapped transactions for all that haven't
+//	// already ubeen done.
+//	for i, tx := range ub.transactions {
+//		if tx == nil {
+//			newTx := NewTx(ub.msgUBlock.MsgBlock.Transactions[i])
+//			newTx.SetIndex(i)
+//			ub.transactions[i] = newTx
+//		}
+//	}
+//
+//	ub.txnsGenerated = true
+//
+//	return ub.transactions
+//}
 
 // Height returns the saved height of the block in the block chain.  This value
 // will be BlockHeightUnknown if it hasn't already explicitly been set.
 func (b *UBlock) Height() int32 {
-	return b.blockHeight
+	return b.block.blockHeight
 }
 
 // SetHeight sets the height of the block in the block chain.
 func (b *UBlock) SetHeight(height int32) {
-	b.blockHeight = height
+	b.block.blockHeight = height
 }
 
 // NewUBlock returns a new instance of a bitcoin block given an underlying
@@ -154,6 +156,10 @@ func NewUBlockFromReader(r io.Reader) (*UBlock, error) {
 // an underlying wire.MsgUBlock and the serialized bytes for it.  See UBlock.
 func NewUBlockFromBlockAndBytes(msgUBlock *wire.MsgUBlock, serializedUBlock []byte) *UBlock {
 	return &UBlock{
+		block: &Block{
+			msgBlock:    &msgUBlock.MsgBlock,
+			blockHeight: BlockHeightUnknown,
+		},
 		msgUBlock:        msgUBlock,
 		serializedUBlock: serializedUBlock,
 		blockHeight:      BlockHeightUnknown,
@@ -163,14 +169,17 @@ func NewUBlockFromBlockAndBytes(msgUBlock *wire.MsgUBlock, serializedUBlock []by
 // Block builds a block from the UBlock. For compatibility with some functions
 // that want a block
 func (ub *UBlock) Block() *Block {
-	block := Block{
-		msgBlock:      &ub.msgUBlock.MsgBlock,
-		blockHash:     ub.blockHash,
-		blockHeight:   ub.blockHeight,
-		transactions:  ub.transactions,
-		txnsGenerated: ub.txnsGenerated,
-	}
-	return &block
+	//if ub.blockGenerated {
+	//	return ub.block
+	//}
+	//ub.block = &Block{
+	//	msgBlock:      &ub.msgUBlock.MsgBlock,
+	//	blockHash:     ub.blockHash,
+	//	blockHeight:   ub.blockHeight,
+	//	transactions:  ub.transactions,
+	//	txnsGenerated: ub.txnsGenerated,
+	//}
+	return ub.block
 }
 
 // ProofSanity checks the consistency of a UBlock

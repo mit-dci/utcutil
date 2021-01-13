@@ -39,8 +39,10 @@ type Block struct {
 	blockHash                *chainhash.Hash // Cached block hash
 	blockHeight              int32           // Height in the main block chain
 	transactions             []*Tx           // Transactions
-	//sstxos                   []*Tx           // All Transactions that are spendable and ttl != 0
-	txnsGenerated bool // ALL wrapped transactions generated
+	inskip                   []uint32
+	outskip                  []uint32
+	skiplistGenerated        bool // ALL wrapped transactions generated
+	txnsGenerated            bool // ALL wrapped transactions generated
 }
 
 // MsgBlock returns the underlying wire.MsgBlock for the Block.
@@ -157,7 +159,11 @@ func (b *Block) Transactions() []*Tx {
 	}
 
 	var sstxoIndex, skipIndex uint32 //, indexToPut uint32
-	_, outskip := dedupeBlock(b)
+	b.inskip, b.outskip = dedupeBlock(b)
+	b.skiplistGenerated = true
+
+	skipIdx := 0
+	skiplistLen := len(b.outskip)
 	// Generate and cache the wrapped transactions for all that haven't
 	// already been done.
 	for i, tx := range b.transactions {
@@ -170,8 +176,10 @@ func (b *Block) Transactions() []*Tx {
 
 				// Check if the output is unspendable or is a
 				// same block spend
-				if len(outskip) > 0 && skipIndex == outskip[0] {
-					outskip = outskip[1:]
+				//if len(outskip) > 0 && skipIndex == b.outskip[0] {
+				if skiplistLen != skipIdx && skipIndex == b.outskip[skipIdx] {
+					//outskip = outskip[1:]
+					skipIdx++
 					indexToPut = SSTxoIndexNA
 				}
 				if isUnspendable(txo) {
@@ -207,6 +215,16 @@ func isUnspendable(o *wire.TxOut) bool {
 	default:
 		return false
 	}
+}
+
+// DedupeBlock returns the inskip and outskip for this block
+func (b *Block) DedupeBlock() ([]uint32, []uint32) {
+	if b.skiplistGenerated {
+		return b.inskip, b.outskip
+	}
+
+	b.inskip, b.outskip = dedupeBlock(b)
+	return b.inskip, b.outskip
 }
 
 // DedupeBlock takes a bitcoin block, and returns two int slices: the indexes of
