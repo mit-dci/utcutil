@@ -256,9 +256,7 @@ func dedupeBlock(blk *Block, hashes *[]chainhash.Hash) (inskip []uint32, outskip
 	// start over, go through outputs finding skips
 	for cbif0, tx := range blk.msgBlock.Transactions {
 		hash := tx.TxHash()
-		if hashes != nil {
-			*hashes = append(*hashes, hash)
-		}
+		hashes = append(hashes, hash)
 		if cbif0 == 0 { // coinbase tx can't be deduped
 			i += uint32(len(tx.TxOut)) // coinbase can have multiple inputs
 			continue
