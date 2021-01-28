@@ -105,9 +105,11 @@ func NewTx(msgTx *wire.MsgTx) *Tx {
 		msgTx:   msgTx,
 		txIndex: TxIndexUnknown,
 	}
-	// Generate slice to hold all of the wrapped transactions if needed.
-	if len(msgTx.TxOut) == 0 {
-		tx.txos = make([]*Txo, 0, len(msgTx.TxOut))
+	// Generate slice to hold all of the wrapped transactions
+	tx.txos = make([]*Txo, len(msgTx.TxOut))
+
+	for i, out := range msgTx.TxOut {
+		tx.txos[i] = NewTxo(out)
 	}
 
 	return &tx
@@ -143,6 +145,13 @@ func NewTxFromReader(r io.Reader) (*Tx, error) {
 type Txo struct {
 	sstxoIndex int16
 	msgTxo     *wire.TxOut
+}
+
+func NewTxo(out *wire.TxOut) *Txo {
+	return &Txo{
+		msgTxo:     out,
+		sstxoIndex: -1,
+	}
 }
 
 func (t *Txo) MsgTxo() *wire.TxOut {

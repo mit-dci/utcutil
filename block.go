@@ -174,7 +174,7 @@ func (b *Block) Transactions() []*Tx {
 			newTx.SetIndex(i)
 			newTx.txHash = &hashes[i]
 
-			for _, txo := range b.msgBlock.Transactions[i].TxOut {
+			for outIdx, txo := range b.msgBlock.Transactions[i].TxOut {
 				var indexToPut int16
 
 				// Check if the output is unspendable or is a
@@ -193,10 +193,12 @@ func (b *Block) Transactions() []*Tx {
 					sstxoIndex++
 				}
 
-				newTx.txos = append(newTx.txos, &Txo{
-					sstxoIndex: indexToPut,
-					msgTxo:     txo,
-				})
+				newTx.txos[outIdx].sstxoIndex = indexToPut
+
+				//newTx.txos = append(newTx.txos, &Txo{
+				//	sstxoIndex: indexToPut,
+				//	msgTxo:     txo,
+				//})
 				skipIndex++
 			}
 			b.transactions[i] = newTx
