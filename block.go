@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
@@ -38,6 +39,9 @@ type Block struct {
 	blockHash                *chainhash.Hash // Cached block hash
 	blockHeight              int32           // Height in the main block chain
 	transactions             []*Tx           // Transactions
+	inskip                   []uint32        // all sstxoIndexes of the TxIns that are unspendable or a same block spend
+	outskip                  []uint32        // all sstxoIndexes of the TxOuts that are unspendable or a same block spend
+	skiplistGenerated        bool            // ALL wrapped transactions generated
 	txnsGenerated            bool            // ALL wrapped transactions generated
 }
 
@@ -154,18 +158,132 @@ func (b *Block) Transactions() []*Tx {
 		b.transactions = make([]*Tx, len(b.msgBlock.Transactions))
 	}
 
+	var sstxoIndex, skipIndex uint32 //, indexToPut uint32
+	hashes := make([]chainhash.Hash, 0, len(b.msgBlock.Transactions))
+	b.inskip, b.outskip = dedupeBlock(b, &hashes)
+
+	b.skiplistGenerated = true
+
+	skipIdx := 0
+	skiplistLen := len(b.outskip)
 	// Generate and cache the wrapped transactions for all that haven't
 	// already been done.
 	for i, tx := range b.transactions {
 		if tx == nil {
 			newTx := NewTx(b.msgBlock.Transactions[i])
 			newTx.SetIndex(i)
+			newTx.txHash = &hashes[i]
+
+			for outIdx, txo := range b.msgBlock.Transactions[i].TxOut {
+				var indexToPut int16
+
+				// Check if the output is unspendable or is a
+				// same block spend
+				//if len(outskip) > 0 && skipIndex == b.outskip[0] {
+				if skiplistLen != skipIdx && skipIndex == b.outskip[skipIdx] {
+					//outskip = outskip[1:]
+					skipIdx++
+					indexToPut = SSTxoIndexNA
+				}
+				if isUnspendable(txo) {
+					indexToPut = SSTxoIndexNA
+				}
+				if indexToPut != SSTxoIndexNA {
+					indexToPut = int16(sstxoIndex)
+					sstxoIndex++
+				}
+
+				newTx.txos[outIdx].sstxoIndex = indexToPut
+
+				skipIndex++
+			}
 			b.transactions[i] = newTx
 		}
 	}
 
 	b.txnsGenerated = true
 	return b.transactions
+}
+
+// IsUnspendable determines whether a tx is spendable or not.
+// returns true if spendable, false if unspendable.
+// NOTE: Since the btcd isUnspendable and bitcoind isUnspendable
+// differs in they'll mark unspendable we have a separate function
+// that follows the same behavior as bitcoind's function
+func isUnspendable(o *wire.TxOut) bool {
+	switch {
+	case len(o.PkScript) > 10000: // len 0 is OK, spendable
+		return true
+	case len(o.PkScript) > 0 && o.PkScript[0] == 0x6a: // OP_RETURN is 0x6a
+		return true
+	default:
+		return false
+	}
+}
+
+// DedupeBlock returns the inskip and outskip for this block
+func (b *Block) DedupeBlock() ([]uint32, []uint32) {
+	if b.skiplistGenerated {
+		return b.inskip, b.outskip
+	}
+
+	b.inskip, b.outskip = dedupeBlock(b, nil)
+	return b.inskip, b.outskip
+}
+
+// DedupeBlock takes a bitcoin block, and returns two int slices: the indexes of
+// inputs, and idexes of outputs which can be removed.  These are indexes
+// within the block as a whole, even the coinbase tx.
+// So the coinbase tx in & output numbers affect the skip lists even though
+// the coinbase ins/outs can never be deduped.  it's simpler that way.
+func dedupeBlock(blk *Block, hashes *[]chainhash.Hash) (inskip []uint32, outskip []uint32) {
+	var i uint32
+	// wire.Outpoints are comparable with == which is nice.
+	inmap := make(map[wire.OutPoint]uint32)
+
+	// go through txs then inputs building map
+	for cbif0, tx := range blk.msgBlock.Transactions {
+		if cbif0 == 0 { // coinbase tx can't be deduped
+			i++ // coinbase has 1 input
+			continue
+		}
+		for _, in := range tx.TxIn {
+			inmap[in.PreviousOutPoint] = i
+			i++
+		}
+	}
+
+	i = 0
+	// start over, go through outputs finding skips
+	for cbif0, tx := range blk.msgBlock.Transactions {
+		hash := tx.TxHash()
+		if hashes != nil {
+			*hashes = append(*hashes, hash)
+		}
+		if cbif0 == 0 { // coinbase tx can't be deduped
+			i += uint32(len(tx.TxOut)) // coinbase can have multiple inputs
+			continue
+		}
+
+		for outidx, _ := range tx.TxOut {
+			op := wire.OutPoint{Hash: hash, Index: uint32(outidx)}
+			inpos, exists := inmap[op]
+			if exists {
+				inskip = append(inskip, inpos)
+				outskip = append(outskip, i)
+			}
+			i++
+		}
+	}
+
+	// sort inskip list, as it's built in order consumed not created
+	sortUint32s(inskip)
+	return
+}
+
+// it'd be cool if you just had .sort() methods on slices of builtin types...
+func sortUint32s(s []uint32) {
+	sort.Slice(s, func(a, b int) bool { return s[a] < s[b] })
 }
 
 // TxHash returns the hash for the requested transaction number in the Block.

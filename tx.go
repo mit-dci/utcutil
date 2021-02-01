@@ -17,6 +17,9 @@ import (
 // yet.
 const TxIndexUnknown = -1
 
+// SSTxoIndexNA is for OP_RETURN txos or same block spends that don't have a sstxoIndex
+const SSTxoIndexNA = -2
+
 // Tx defines a bitcoin transaction that provides easier and more efficient
 // manipulation of raw transactions.  It also memoizes the hash for the
 // transaction on its first access so subsequent accesses don't have to repeat
@@ -27,6 +30,7 @@ type Tx struct {
 	txHashWitness *chainhash.Hash // Cached transaction witness hash
 	txHasWitness  *bool           // If the transaction has witness data
 	txIndex       int             // Position within a block or TxIndexUnknown
+	txos          []*Txo          // A convenient wrapper around raw TxOut
 }
 
 // MsgTx returns the underlying wire.MsgTx for the transaction.
@@ -90,13 +94,26 @@ func (t *Tx) SetIndex(index int) {
 	t.txIndex = index
 }
 
+// Txos returns the wrapped txos for this tx
+func (t *Tx) Txos() []*Txo {
+	return t.txos
+}
+
 // NewTx returns a new instance of a bitcoin transaction given an underlying
 // wire.MsgTx.  See Tx.
 func NewTx(msgTx *wire.MsgTx) *Tx {
-	return &Tx{
+	tx := Tx{
 		msgTx:   msgTx,
 		txIndex: TxIndexUnknown,
 	}
+	// Generate slice to hold all of the wrapped transactions
+	tx.txos = make([]*Txo, len(msgTx.TxOut))
+
+	for i, out := range msgTx.TxOut {
+		tx.txos[i] = NewTxo(out)
+	}
+
+	return &tx
 }
 
 // NewTxFromBytes returns a new instance of a bitcoin transaction given the
@@ -120,5 +137,36 @@ func NewTxFromReader(r io.Reader) (*Tx, error) {
 		msgTx:   &msgTx,
 		txIndex: TxIndexUnknown,
 	}
+
 	return &t, nil
+}
+
+// Txo is a wrapper around TxOuts that provides easier and more efficient
+// manipulation of raw transaction outputs.
+type Txo struct {
+	sstxoIndex int16
+	msgTxo     *wire.TxOut
+}
+
+// NewTxo creates a Txo given a TxOut in the wire format
+func NewTxo(out *wire.TxOut) *Txo {
+	return &Txo{
+		msgTxo:     out,
+		sstxoIndex: -1,
+	}
+}
+
+// MsgTxo returns the underlying wire TxOut
+func (t *Txo) MsgTxo() *wire.TxOut {
+	return t.msgTxo
+}
+
+// SIndex returns the spent txo index for this txo
+func (t *Txo) SIndex() int16 {
+	return t.sstxoIndex
+}
+
+// SetSIndex sets the spent txo index for this txo
+func (t *Txo) SetSIndex(index int16) {
+	t.sstxoIndex = index
 }
